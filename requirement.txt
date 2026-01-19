@@ -19,3 +19,7 @@ requests
 # data visualization
 matplotlib
 seaborn
+
+# clustering
+scikit-learn
+hdbscanreq

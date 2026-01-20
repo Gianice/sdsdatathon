@@ -110,15 +110,15 @@ is_domestic_ultimate,Derived numeric feature
 is_domestic_ultimate_missing,Missing indicator for is_domestic_ultimate
 Region__Asia,One-hot: Region = Asia
 Region__<NA>,Missing indicator for Region
-Entity Type__branch,One-hot: Entity Type = branch
-Entity Type__parent,One-hot: Entity Type = parent
-Entity Type__subsidiary,One-hot: Entity Type = subsidiary
+Entity Type__Branch,One-hot: Entity Type = Branch
+Entity Type__Parent,One-hot: Entity Type = Parent
+Entity Type__Subsidiary,One-hot: Entity Type = Subsidiary
 Entity Type__<NA>,Missing indicator for Entity Type
-Ownership Type__non-corporates,One-hot: Ownership Type = non-corporates
-Ownership Type__nonprofit,One-hot: Ownership Type = nonprofit
-Ownership Type__partnership,One-hot: Ownership Type = partnership
-Ownership Type__private,One-hot: Ownership Type = private
-Ownership Type__public sector,One-hot: Ownership Type = public sector
+Ownership Type__Non-Corporates,One-hot: Ownership Type = Non-Corporates
+Ownership Type__Nonprofit,One-hot: Ownership Type = Nonprofit
+Ownership Type__Partnership,One-hot: Ownership Type = Partnership
+Ownership Type__Private,One-hot: Ownership Type = Private
+Ownership Type__Public Sector,One-hot: Ownership Type = Public Sector
 Ownership Type__<NA>,Missing indicator for Ownership Type
 Legal Status__0.0,One-hot: Legal Status = 0.0
 Legal Status__100.0,One-hot: Legal Status = 100.0
@@ -130,9 +130,12 @@ Legal Status__3.0,One-hot: Legal Status = 3.0
 Legal Status__50.0,One-hot: Legal Status = 50.0
 Legal Status__8.0,One-hot: Legal Status = 8.0
 Legal Status__<NA>,Missing indicator for Legal Status
-Franchise Status__no,One-hot: Franchise Status = no
+Franchise Status__FALSE,One-hot: Franchise Status = FALSE
+Franchise Status__False,One-hot: Franchise Status = False
+Franchise Status__NO,One-hot: Franchise Status = NO
+Franchise Status__No,One-hot: Franchise Status = No
 Franchise Status__<NA>,Missing indicator for Franchise Status
-Manufacturing Status__yes,One-hot: Manufacturing Status = yes
+Manufacturing Status__Yes,One-hot: Manufacturing Status = Yes
 Manufacturing Status__<NA>,Missing indicator for Manufacturing Status
 Registration Number Type__indonesia legalization number,One-hot: Registration Number Type = indonesia legalization number
 Registration Number Type__<NA>,Missing indicator for Registration Number Type

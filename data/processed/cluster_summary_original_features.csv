@@ -1,0 +1,8 @@
+cluster,size,Employees Single Site__mean,Employees Single Site__median,Employees Total__mean,Employees Total__median,Revenue (USD)__mean,Revenue (USD)__median,Year Found__mean,Year Found__median,Market Value (USD)__mean,Market Value (USD)__median,Country__top,Region__top,Entity Type__top,Ownership Type__top,NAICS Description__top,SIC Description__top,Legal Status__top
+4,3002,1.21,0.0,1.21,0.0,26219.07,0.0,2019.46,2022.0,82801.93,0.0,China,Asia,Branch,Private,All Other Miscellaneous Store Retailers (except Tobacco Stores),Ret drugs/sundries,3.0
+6,2873,21.94,18.0,21.94,18.0,3019025.04,1714112.0,2019.0,2022.0,9778092.3,6675812.0,China,Asia,Subsidiary,Private,Nonclassifiable Establishments,Business services,3.0
+0,1756,22.34,11.0,22.34,11.0,11046163.73,1537856.5,2003.55,2004.0,23965914.55,3770215.5,China,Asia,Subsidiary,Private,Nonresidential Property Managers,Nonresidential building operator,3.0
+3,462,11.68,1.0,11.68,1.0,1565047.22,806292.0,2008.88,2023.0,4644094.32,849936.0,China,Asia,Subsidiary,Private,Unclassified Establishments,Nonclassified establishment,0.0
+2,273,8.75,7.0,8.58,7.0,525642.63,223970.0,2018.58,2022.0,0.0,0.0,China,Asia,Subsidiary,Private,Other Aquaculture,Fish/shellfish farm,3.0
+1,181,323.19,207.0,323.19,207.0,23958681.82,5505750.0,2004.47,2003.0,40948848.84,9609642.0,China,Asia,Subsidiary,Private,Offices of Real Estate Agents and Brokers,Real estate agent/manager,3.0
+5,12,1817.5,1600.0,1817.5,1600.0,45593069.0,5767998.0,2002.7,2002.0,12411083.42,0.0,China,Asia,Parent,Private,Commercial Banking,Mfg fabricated rubber products,3.0

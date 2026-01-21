@@ -13,19 +13,6 @@ pandas for data manipulation and analysis
 numpy for numerical computations
 
 
-scikit-learn for machine learning tasks
-
-
-xgboost for training the predictive model
-
-
-tensorflow for metric learning
-
-
-itertools for agent–client pairing and client similarity calculations
-
-
-pyarrow and fastparquet for reading dataset files
 
 
 Running the Notebook and Reproducing Results

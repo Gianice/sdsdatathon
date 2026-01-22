@@ -16,35 +16,37 @@ PROFILES_PATH = Path(__file__).resolve().parent / "../data/processed/cluster_pro
 CLUSTERED_DATA_PATH = Path(__file__).resolve().parent / "../raw_data/champions_group_data_with_cluster.csv"
 CLUSTER_COL = "cluster_id"
 
-# FIXED: Use the stable 1.5 Flash model (2.5-flash-lite does not exist yet)
-MODEL_ID = "gemini-3-flash-preview"
+# Use stable model to avoid 404s
+MODEL_ID = "gemini-2.5-flash"
 
-BATCH_SIZE = 10  # Increased batch size since outputs are now shorter
+BATCH_SIZE = 10 
 TOP_K_PER_SIDE_FOR_LLM = 5 
-MAX_OUTPUT_TOKENS = 4096
+MAX_OUTPUT_TOKENS = 8192
 TEMPERATURE = 0.2
 MAX_RETRIES = 6
 
 # ----------------------------
-# Helpers: Data Preparation (Kept same as before)
+# 1. Data Processing Helpers
 # ----------------------------
 
 def make_cluster_cards(profiles_df: pd.DataFrame, top_k: int = 8) -> list[dict]:
+    """Identify what makes each cluster statistically unique."""
     global_mean = profiles_df.mean(axis=0)
     diff = profiles_df.subtract(global_mean, axis=1)
+
     cards = []
     for cid in profiles_df.index:
         d = diff.loc[cid].sort_values(ascending=False)
         top_pos = d.head(top_k)
-        top_neg = d.tail(top_k)
+        
         cards.append({
             "cluster_id": int(cid),
             "top_positive_features": [{"feature": f, "delta_from_typical": float(v)} for f, v in top_pos.items()],
-            "top_negative_features": [{"feature": f, "delta_from_typical": float(v)} for f, v in top_neg.items()],
         })
     return cards
 
 def compress_cards_for_llm(cards: list[dict], top_k: int = 6) -> list[dict]:
+    """Simplify the payload for the LLM."""
     small = []
     for c in cards:
         small.append({
@@ -52,145 +54,150 @@ def compress_cards_for_llm(cards: list[dict], top_k: int = 6) -> list[dict]:
             "top_positive_features": [
                 {"feature": x["feature"], "delta_from_typical": round(float(x["delta_from_typical"]), 3)}
                 for x in c["top_positive_features"][:top_k]
-            ],
-            # We remove negative features for the "short" version to save tokens
-            # unless truly needed. Here we keep them but limit count.
-             "top_negative_features": [
-                {"feature": x["feature"], "delta_from_typical": round(float(x["delta_from_typical"]), 3)}
-                for x in c["top_negative_features"][:2] 
-            ],
+            ]
         })
     return small
 
+def _nonnull_rate(series: pd.Series) -> float:
+    if series is None or len(series) == 0: return 0.0
+    return round(float(series.notna().mean()), 3)
+
+def _top_share(series: pd.Series, k: int = 5) -> list[str]:
+    """Returns simple list of top values to save tokens."""
+    if series is None or len(series) == 0: return []
+    return list(series.fillna("Unknown").astype(str).value_counts().head(k).index)
+
+def make_cluster_context(raw_with_cluster: pd.DataFrame, cluster_col: str, cid: int) -> dict:
+    """
+    Extracts the 'Commercial Signals' from the raw data.
+    """
+    sub = raw_with_cluster[raw_with_cluster[cluster_col] == cid].copy()
+    n = int(len(sub))
+    
+    # Helper to get numeric stats
+    def _get_median(col):
+        if col not in sub.columns: return 0
+        s = pd.to_numeric(sub[col], errors="coerce")
+        return float(s.median()) if not s.empty else 0
+
+    # Extract Key Business Columns
+    # Note: Adjust column names if your CSV is slightly different
+    it_budget = sub["IT Budget"] if "IT Budget" in sub.columns else None
+    servers = sub["No. of Servers"] if "No. of Servers" in sub.columns else None
+    website = sub["Website"] if "Website" in sub.columns else None
+    entity_type = sub["Entity Type"] if "Entity Type" in sub.columns else None
+    
+    # Calculate "Tech Intensity" proxies
+    has_servers = _nonnull_rate(servers)
+    has_it_budget = _nonnull_rate(it_budget)
+    
+    return {
+        "n_records": n,
+        "top_locations": _top_share(sub.get("Country"), 2),
+        "top_industries": _top_share(sub.get("SIC Description"), 2),
+        "top_entity_types": _top_share(entity_type, 2),
+        "median_revenue": _get_median("Revenue (USD)"),
+        "median_employees": _get_median("Employees Total"),
+        "signals": {
+            "has_website_rate": _nonnull_rate(website),
+            "tech_data_availability": (has_servers + has_it_budget) / 2 # Simple score
+        }
+    }
+
+def attach_context_to_cards(cards: list[dict], raw_df: pd.DataFrame, cluster_col: str) -> list[dict]:
+    out = []
+    for c in cards:
+        c2 = dict(c)
+        c2["cluster_context"] = make_cluster_context(raw_df, cluster_col, int(c["cluster_id"]))
+        out.append(c2)
+    return out
+
 def make_lightweight_summary(cards_with_context: list[dict]) -> list[dict]:
+    """
+    Summarizes all clusters for the 'Executive Landscape' view.
+    """
     summary = []
     for c in cards_with_context:
         ctx = c["cluster_context"]
-        top_ind = ctx["top_industries_sic"][0]["value"] if ctx["top_industries_sic"] else "Unknown"
-        top_country = ctx["top_countries"][0]["value"] if ctx["top_countries"] else "Unknown"
+        
+        # Safe string formatting
+        loc = ctx['top_locations'][0] if ctx['top_locations'] else "Unknown"
+        ind = ctx['top_industries'][0] if ctx['top_industries'] else "Unknown"
+        
         summary.append({
             "id": c["cluster_id"],
             "count": ctx["n_records"],
-            "top_industry": top_ind,
-            "top_country": top_country,
-            "median_revenue": ctx.get("revenue_usd_summary", {}).get("median"),
-            "website_rate": ctx["data_availability_rates"]["has_website_rate"],
+            "primary_market": f"{loc} - {ind}",
+            "rev_median": ctx["median_revenue"],
+            "tech_score": int(ctx["signals"]["tech_data_availability"] * 100),
+            "website_pct": int(ctx["signals"]["has_website_rate"] * 100)
         })
     return summary
 
 # ----------------------------
-# Helpers: Context (Kept same as before)
-# ----------------------------
-
-def _top_share(series: pd.Series, k: int = 5) -> list[dict[str, Any]]:
-    if series is None or len(series) == 0: return []
-    s = series.fillna("NA").astype(str).str.strip()
-    vc = s.value_counts(dropna=False).head(k)
-    out = []
-    for val, cnt in vc.items():
-        out.append({"value": val, "share": round(float(cnt) / float(len(s)), 3), "count": int(cnt)})
-    return out
-
-def _nonnull_rate(series: pd.Series) -> float | None:
-    if series is None or len(series) == 0: return None
-    return round(float(series.notna().mean()), 3)
-
-def _maybe_col(df: pd.DataFrame, col: str) -> pd.Series | None:
-    return df[col] if col in df.columns else None
-
-def make_cluster_context(raw_with_cluster: pd.DataFrame, cluster_col: str, cid: int) -> dict:
-    sub = raw_with_cluster[raw_with_cluster[cluster_col] == cid].copy()
-    n = int(len(sub))
-
-    def _num_summary(col: str) -> dict | None:
-        if col not in sub.columns or n == 0: return None
-        s = pd.to_numeric(sub[col], errors="coerce")
-        if s.notna().sum() == 0: return None
-        return { "median": float(s.median()) } # Keep only median for brevity
-
-    country = _maybe_col(sub, "Country")
-    sic_desc = _maybe_col(sub, "SIC Description")
-    website = _maybe_col(sub, "Website")
-    it_pc = _maybe_col(sub, "No. of PC")
-
-    ctx = {
-        "n_records": n,
-        "top_countries": _top_share(country, 2), # Reduce to top 2
-        "top_industries_sic": _top_share(sic_desc, 2),
-        "data_availability_rates": { "has_website_rate": _nonnull_rate(website) },
-        "it_field_availability_rates": { "pc_non_null_rate": _nonnull_rate(it_pc) },
-    }
-    ctx["revenue_usd_summary"] = _num_summary("Revenue (USD)")
-    ctx["employees_total_summary"] = _num_summary("Employees Total")
-    return ctx
-
-def attach_context_to_cards(cards_for_llm: list[dict], raw_with_cluster: pd.DataFrame, cluster_col: str) -> list[dict]:
-    out = []
-    for c in cards_for_llm:
-        cid = int(c["cluster_id"])
-        c2 = dict(c)
-        c2["cluster_context"] = make_cluster_context(raw_with_cluster, cluster_col, cid)
-        out.append(c2)
-    return out
-
-# ----------------------------
-# UPDATED: Concise Prompts
+# 2. Strategic Prompts
 # ----------------------------
 
 def build_profile_prompt(batch_cards: list[dict]) -> str:
     """
-    Asks for a 'Trading Card' style output: minimal text, maximum signal.
+    Asks for a Sales-Focused Profile per cluster.
     """
     return f"""
 ### Role
-You are a Database Intelligence Specialist.
+You are a B2B Market Analyst.
 
 ### Task
-Create a concise "Segment Card" for each company cluster below. 
-Do NOT write paragraphs. Use a strict bulleted format.
+Analyze these company clusters. For EACH cluster, write a "Sales Intelligence Card".
 
 ### Input Data
 {json.dumps(batch_cards, indent=2)}
 
 ### Output Format (Repeat for each cluster)
 
-#### Cluster [ID]: [Creative Professional Name]
-* **Vital Stats:** [N] Companies | Top Loc: [Country] | Top Ind: [Industry]
-* **The DNA:** 1 short sentence explaining what makes them unique based on `top_positive_features`.
-* **Commercial Signal:** 1 short sentence on the sales opportunity (e.g., "High revenue but low tech—sell digital transformation").
-
+#### 📂 Cluster [ID]: [Professional Persona Name]
+* **The Profile:** [Count] companies primarily in [Industry] located in [Location].
+* **Commercial Signals:**
+    * *Scale:* Median Revenue $[Rev] | Median Employees [Emp]
+    * *Tech Signal:* (Interpret `tech_data_availability` - Do we have IT budget/server data?)
+    * *Digital Footprint:* (Interpret `has_website_rate` - High or Low?)
+* **Key Insight:** (Look at `top_positive_features` - e.g., "These companies are unusually likely to be manufacturing branches").
+* **🎯 Target For:** (Who should buy this list? e.g., "Logistics providers," "IT Hardware sellers," "Risk Assessors").
 ---
 """.strip()
 
 def build_landscape_prompt(all_summaries: list[dict]) -> str:
     """
-    Asks for a Comparative Table as the main output.
+    Asks for the 'Superlatives' and Risk/Value analysis.
     """
     return f"""
 ### Role
-You are a Strategy Director.
+You are a Data Monetization Strategist. Your client is selling a B2B Company Dataset.
+Your goal is to demonstrate the value of this data by highlighting the most valuable, risky, and unique segments.
 
-### Task
-Create a **Market Landscape Summary** for the following clusters.
-Your goal is to compare them in a single view.
-
-### Input Data (Summary of All Clusters)
+### Input: Cluster Summaries
 {json.dumps(all_summaries, indent=2)}
 
-### Output Format
+### Task: Generate an "Executive Portfolio Review"
 
-## 1. The Market at a Glance
-(Provide 3 bullet points summarizing the dominant patterns in the dataset).
+#### Part 1: The "Superlatives" (Pick specific Clusters)
+Identify the specific Cluster ID that best fits each category below and explain WHY based on the data.
+* **🏆 The "Whales" (High Value Target):** Which cluster has the highest median revenue/scale? (Best for Enterprise Sales).
+* **💻 The "Tech-Ready" (Digital Target):** Which cluster has the highest `tech_score`? (Best for selling Software/Hardware).
+* **⚠️ The "Dark Market" (High Risk):** Which cluster has high revenue but very low `website_pct` (no website)? These are often traditional, opaque, or risky firms.
+* **💎 The "Volume Play" (SMB Target):** Which cluster has a high count of companies but smaller employee size? (Best for mass-market SaaS).
 
-## 2. Cluster Comparison Matrix
-(Create a Markdown Table with columns: Cluster ID, Persona Name (invent one), Count, Primary Industry, Digital Maturity (High/Low based on website_rate)).
+#### Part 2: Strategic Landscape Table
+Create a markdown table summarizing the top 5 largest clusters:
+| ID | Persona Name | Primary Market | Avg. Revenue | Best Product to Sell to Them |
+|:---|:---|:---|:---|:---|
+| ... | ... | ... | ... | ... |
 
-## 3. Top Targets
-(Identify the single best cluster for: 1. High Volume Sales, 2. High Value/Enterprise Sales).
+#### Part 3: Commercial Pitch
+Write one sentence to a potential buyer: "This dataset allows you to distinguish between [Cluster X Persona] and [Cluster Y Persona], enabling you to target [Specific Need]."
 """.strip()
 
 # ----------------------------
-# Gemini Client
+# 3. Robust Execution
 # ----------------------------
 
 def call_gemini_with_retries(client: genai.Client, prompt: str) -> str:
@@ -201,36 +208,47 @@ def call_gemini_with_retries(client: genai.Client, prompt: str) -> str:
                 contents=prompt,
                 config={"temperature": TEMPERATURE, "max_output_tokens": MAX_OUTPUT_TOKENS},
             )
-            # Check if text was actually generated (sometimes safety filters return empty)
+            # CHECK: Ensure response is valid text
             if response.text:
                 return response.text
             else:
-                return " [System] Cluster skipped due to Safety Filter."
+                return "\n⚠️ [System] Cluster batch skipped due to Safety Filter.\n"
                 
         except Exception as e:
-            # Handle rate limits
-            if "429" in str(e) or "quota" in str(e).lower():
-                time.sleep(30 + (attempt * 10))
+            # Handle Rate Limits
+            err = str(e).lower()
+            if "429" in err or "quota" in err:
+                sleep_time = 30 + (attempt * 10)
+                print(f"[Warning] Rate Limit Hit. Sleeping {sleep_time}s...")
+                time.sleep(sleep_time)
+            elif "500" in err or "503" in err:
+                print(f"[Retry {attempt+1}] Server Error. Retrying...")
+                time.sleep(5)
             else:
+                print(f"[Retry {attempt+1}] Unexpected Error: {e}")
                 time.sleep(2)
-                
-    # FALLBACK: Return a string error message instead of None
-    return f"\n\n###  Error: Could not generate this section.\n"
-
-# ----------------------------
-# Main
-# ----------------------------
+    
+    # FALLBACK: Return a string error message instead of None to prevent crash
+    return "\n\n### ⚠️ Error: Could not generate this section after multiple attempts.\n"
 
 def main():
     load_dotenv()
     api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("Please set GEMINI_API_KEY in your environment.")
+    
     client = genai.Client(api_key=api_key)
 
     # 1. Load Data
     print("Loading data...")
+    if not PROFILES_PATH.exists() or not CLUSTERED_DATA_PATH.exists():
+        print(f"Error: Files not found.\nExpected Profiles: {PROFILES_PATH}\nExpected Raw: {CLUSTERED_DATA_PATH}")
+        return
+
     profiles = pd.read_csv(PROFILES_PATH, index_col=0).T
     profiles.index = profiles.index.astype(int)
-    raw_with_cluster = pd.read_csv(CLUSTERED_DATA_PATH)
+    # FIX: low_memory=False prevents DtypeWarning on large files
+    raw_with_cluster = pd.read_csv(CLUSTERED_DATA_PATH, low_memory=False)
 
     # 2. Prepare Data
     print("Generating cluster cards...")
@@ -242,40 +260,52 @@ def main():
     print(f"Processing {total_clusters} clusters...")
 
     # ---------------------------------------------------------
-    # PASS 1: Detailed Profiling (Short & Clean)
+    # PASS 1: Generate Landscape (The "Big Picture")
     # ---------------------------------------------------------
+    print("\n--- Generating Executive Landscape (Pass 1) ---")
+    all_summaries = make_lightweight_summary(cards_with_context)
+    landscape_prompt = build_landscape_prompt(all_summaries)
+    landscape_text = call_gemini_with_retries(client, landscape_prompt)
+    print("Landscape analysis complete.")
+    
+    #  - Visualizing clusters by Risk vs Reward can help here.
+
+    # ---------------------------------------------------------
+    # PASS 2: Detailed Profiles (The "Deep Dive")
+    # ---------------------------------------------------------
+    print("\n--- Generating Detailed Profiles (Pass 2) ---")
     full_report_parts = []
-    print(" Generating Profiles...")
     
     for i in range(0, total_clusters, BATCH_SIZE):
         batch = cards_with_context[i : i + BATCH_SIZE]
-        print(f"  > Batch {i}-{i+len(batch)}")
+        print(f"  > Processing Batch {i}-{min(i+BATCH_SIZE, total_clusters)}")
         
         prompt = build_profile_prompt(batch)
         response_text = call_gemini_with_retries(client, prompt)
         full_report_parts.append(response_text)
         
-        time.sleep(1)
+        # Polite sleep to respect Free Tier
+        time.sleep(2)
 
     # ---------------------------------------------------------
-    # PASS 2: Landscape Analysis (The Cross-Cluster Part)
+    # Final Output Assembly
     # ---------------------------------------------------------
-    print(" Generating Landscape Analysis...")
-    all_cluster_summaries = make_lightweight_summary(cards_with_context)
-    landscape_prompt = build_landscape_prompt(all_cluster_summaries)
-    landscape_text = call_gemini_with_retries(client, landscape_prompt)
+    final_output = "# CHAMPIONS GROUP: COMMERCIAL INTELLIGENCE REPORT\n\n"
+    
+    # Add Landscape (Check if valid)
+    if landscape_text and "Error" not in landscape_text:
+        final_output += landscape_text + "\n\n"
+    
+    final_output += "## CLUSTER INTELLIGENCE CARDS\n"
+    
+    # FIX: Filter out None values before joining
+    valid_parts = [part for part in full_report_parts if part is not None]
+    final_output += "\n".join(valid_parts)
 
-    # ---------------------------------------------------------
-    # Final Output
-    # ---------------------------------------------------------
-    final_output = "# CHAMPIONS GROUP: MARKET INTELLIGENCE\n\n"
-    final_output += landscape_text + "\n\n"
-    final_output += "## SEGMENT PROFILES\n"
-    final_output += "\n".join(full_report_parts)
-
-    out_path = Path(__file__).resolve().parent / "cluster_insights.md"
+    out_path = Path(__file__).resolve().parent / "champions_cluster_insight.md"
     out_path.write_text(final_output, encoding="utf-8")
-    print(f"\nDone! Report saved to: {out_path}")
+    
+    print(f"\nSUCCESS! Report saved to: {out_path}")
 
 if __name__ == "__main__":
     main()

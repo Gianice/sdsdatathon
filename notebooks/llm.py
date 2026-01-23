@@ -17,7 +17,7 @@ CLUSTERED_DATA_PATH = Path(__file__).resolve().parent / "../raw_data/champions_g
 CLUSTER_COL = "cluster_id"
 
 # Use stable model to avoid 404s
-MODEL_ID = "gemini-2.5-flash"
+MODEL_ID = "gemini-2.5-flash-lite"
 
 BATCH_SIZE = 10 
 TOP_K_PER_SIDE_FOR_LLM = 5 
